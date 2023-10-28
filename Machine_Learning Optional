@@ -1,1 +1,189 @@
+#Tanishka Khanduja
+#Machine Learning Optional Assignment 
+#QBIO 481 FALL 20203
+
+#Q1
+#public repository created, name written etc. 
+
+#Q2
+#a) SELEX-seq is an in vitro method used to identify specific RNA or DNA sequences (aptamers) that bind to a target molecule (often a protein).
+It involves iterative rounds of selection and amplification of high-affinity binding sequences. A pool of random nucleic acid sequences is incubated with the target molecule. Sequences that bind are isolated, amplified, and used as the starting pool for the next round. 
+After several rounds, highly specific binders are obtained. PBM (Protein Binding Microarrays) is a high-throughput method to study protein-DNA interactions. In PBM, a microarray is created with thousands of known DNA sequences, and the protein of interest is incubated with the array. 
+The bound protein is detected using antibodies or other detection methods. By analyzing the binding patterns on the microarray, the DNA binding preferences of the protein can be determined.
+#b) ChIP-seq is an in vivo method used to identify protein-DNA interactions within a cellular context. It helps determine which regions of the genome are bound by specific proteins.
+Cells are cross-linked to preserve protein-DNA interactions, and the chromatin is fragmented. Antibodies specific to the protein of interest are used to immunoprecipitate the protein along with associated DNA fragments. The DNA is then sequenced.
+#c) Advantages of SELEX-seq and PBM: Can be tailored to various target molecules, and can identify high-affinity ligands. Can screen a large number of sequences simultaneously (especially PBM).
+Advantages of ChIP-seq: Provides insights into in vivo interactions. Can be used to study various DNA-protein interactions.
+Disadvantages of SELEX-seq and PBM: Require purified target molecules.Resource-intensive and time-consuming.
+Disadvantages of ChIP-seq: Requires specific antibodies, which may not always be available or of high quality. Cross-linking can introduce artifacts.
+
+
+#Q3)
+a) #R downloaded
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install()
+# DNAshapeR
+BiocManager::install("DNAshapeR")
+# Biostrings
+BiocManager::install("Biostrings")
+# Others
+install.packages("caret")
+#initialization
+library(DNAshapeR)
+library(caret)
+library(Biostrings)
+library(DNAshapeR)
+#gcPBM in vitro experimental data of Mad, Max and Myc from https://github.com/TsuPeiChiu/QBIO481/tree/master/gcPBM downloaded. Converted to FASTA format. 
+
+#Q6) ChIP-seq data (including “bound” and “non-bound” data) of CTCF transcription factor of Mus musculus from https://github.com/TsuPeiChiu/QBIO481/tree/master/CTCF downloaded. All packages installed in Pt3
+
+#Q7)
+# names
+ns <- c('Mad', 'Max', 'Myc')
+# list for each shape output
+shapes <- list()
+# get shape for each file
+for (n in ns) 
+    fn <- paste(n,'.fa', sep='')
+    shapes[[length(shapes) + 1]] <- getShape(fn)
+
+# add names
+names(shapes) <- ns
+
+# plot where each row is shape type
+# each col is transcription factor
+plot.new()
+layout(matrix(1:12, ncol=length(shapes)))
+for (n in ns) 
+    plotShape(shapes[[n]]$MGW)
+    plotShape(shapes[[n]]$ProT)
+    plotShape(shapes[[n]]$Roll)
+    plotShape(shapes[[n]]$HelT)
+#They all seems to have the same pattern of MGW, ProT, Roll, and HelT along the sequences.
+
+# encode nucleotide
+# gets nucleotide and returns the corresponding one-hot encoding
+encodeNucleotide <- function(nucleotide) {
+    dict <- list(A=c(0,0,0,1), C=c(0,0,1,0), G=c(0,1,0,0), T=c(1,0,0,0))
+    return(dict[nucleotide])
+
+
+# encode sequence
+# gets sequence and returns vector of one-hot encoded sequence
+encodeSequence <- function(sequence) {
+    nucleotides <- strsplit(sequence, split='', fixed=T)
+    result <- unlist(lapply(nucleotides, encodeNucleotide))
+    names(result) <- c()
+    return(result)
+
+# encode FASTA
+# gets FASTA file and returns matrix of one-hot encoded sequences
+encodeFASTA <- function(filename) 
+    # read FASTA
+    fa <- read.table(filename, comment.char='>')
+    # encode sequence
+    result <- apply(fa, 1, encodeSequence)
+    # transpose
+    result <- t(result)
+    return(result)
+
+nucleotides <- c('A', 'C', 'G', 'T')
+for (i in nucleotides) {
+    print(encodeNucleotide(i))
+}
+
+sequence <- 'AATTC'
+print(encodeSequence(sequence))
+
+sequence <- 'GGGCATGAAAGCCACCTCGTGGTTTTGCAGCAAGTG'
+len <- length(unlist(strsplit(sequence, split='', fixed=T)))
+test <- encodeFASTA('Mad.fa')
+print(dim(test))
+print(dim(test)[2] == len*4)
+print(all(test[1,] == encodeSequence(sequence)))
+
+#Q4 and 8) 
+# create list of feature matrices for each file
+features.seq <- list()
+features.shape <- list()
+
+# loop over files
+for (n in ns) 
+    # add 1-mer feature vector
+    features.seq[[n]] <- encodeFASTA(paste(n, '.fa', sep=''))
+    # combine intra bp parameters
+    features.shape[[n]] <- cbind(features.seq[[n]], shapes[[n]]$MGW, shapes[[n]]$ProT)
+    # combine inter bp parameters
+    features.shape[[n]] <- cbind(features.shape[[n]], shapes[[n]]$Roll, shapes[[n]]$HelT)
+for (n in ns) 
+    features.seq[[n]] <- features.seq[[n]][, colSums(is.na(features.seq[[n]])) == 0]
+    features.shape[[n]] <- features.shape[[n]][, colSums(is.na(features.shape[[n]])) == 0]
+data.seq <- list()
+data.shape <- list()
+for (n in ns) {
+    gt <- read.table(paste(n, '.s', sep=''))[,2]
+    data.seq[[n]] <- cbind(features.seq[[n]], gt)
+    data.shape[[n]] <- cbind(features.shape[[n]], gt)
+train.data.shape <- list()
+test.data.shape <- list()
+for (n in ns) 
+    trainIndex <- createDataPartition(data.shape[[n]][,ncol(data.shape[[n]])], p=.8, list = FALSE, times=1)
+    train.data.shape[[n]] <- data.shape[[n]][trainIndex,]
+    test.data.shape[[n]] <- data.shape[[n]][-trainIndex,]
+fitControl <- trainControl(method="cv", number=10, savePredictions=TRUE)
+model.shape <- list()
+for (n in ns) 
+    model.shape[[n]] <- train(gt~., data=data.frame(train.data.shape[[n]]), trControl=fitControl, method="glmnet",
+                   tuneGrid=data.frame(alpha = 0, lambda=c(2^c(-15:15))))
+# split data
+train.data.seq <- list()
+test.data.seq <- list()
+for (n in ns) {
+    trainIndex <- createDataPartition(data.seq[[n]][,ncol(data.seq[[n]])], p=.8, list = FALSE, times=1)
+    train.data.seq[[n]] <- data.seq[[n]][trainIndex,]
+    test.data.seq[[n]] <- data.seq[[n]][-trainIndex,]
+
+# cross validation
+fitControl <- trainControl(method="cv", number=10, savePredictions=TRUE)
+# train
+model.seq <- list()
+for (n in ns) 
+    model.seq[[n]] <- train(gt~., data=data.frame(train.data.seq[[n]]), trControl=fitControl, method="glmnet",
+                   tuneGrid=data.frame(alpha = 0, lambda=c(2^c(-15:15)))
+for (n in ns) 
+    print(n)
+    print(paste('Shape model:', mean(model.shape[[n]]$results$Rsquared[!is.na(model.shape[[n]]$results$Rsquared)])))
+    print(paste('Sequence model:', mean(model.seq[[n]]$results$Rsquared[!is.na(model.seq[[n]]$results$Rsquared)])))
+for (n in ns) 
+    print(n)
+    pred.shape <- predict(model.shape[[n]], test.data.shape[[n]])
+    pred.seq <- predict(model.seq[[n]], test.data.seq[[n]])
+    print(paste('Shape model RMSE:', RMSE(pred.shape, data.frame(test.data.shape[[n]])$gt)))
+    print(paste('Sequence model RMSE:', RMSE(pred.seq, data.frame(test.data.seq[[n]])$gt)))
+# test for correct dimensions
+
+# MGW, ProT => intra bp parameter (number of features per sequence = lengthOfSequence)
+# Roll, HelT => inter bp parameter (number of features per sequence = lengthOfSequence - 1)
+len <- 36
+for (n in ns) {
+    print(dim(features.shape[[n]]))
+    print(dim(features.shape[[n]])[1] == dim(shapes[[n]][1])[1])
+    x <- len*4 + len*2 + (len-1)*2
+    print(dim(features.shape[[n]])[2] == x)
+# test for NA
+for (n in ns) 
+    print(!any(is.na(features.shape[[n]])))
+# test dimensions for data
+for (n in ns) 
+    print(dim(features.shape[[n]])[1] == dim(data.shape[[n]])[1])
+    print(dim(features.shape[[n]])[2] == dim(data.shape[[n]])[2]-1)
+# test dimensions of test & training data
+for (n in ns) 
+    print(dim(train.data.shape[[n]])[2] == dim(data.shape[[n]])[2])
+    print(dim(test.data.shape[[n]])[2] == dim(data.shape[[n]])[2])
+    print(paste(dim(train.data.shape[[n]])[1], 0.8*dim(data.shape[[n]])[1]))
+    print(paste(dim(test.data.shape[[n]])[1], 0.2*dim(data.shape[[n]])[1]))
+
+ 
 
